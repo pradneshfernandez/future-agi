@@ -24,6 +24,7 @@ import React, {
 } from "react";
 import Iconify from "src/components/iconify";
 import { useMapToVariable } from "./useMapToVariable";
+import { formatTimedTranscript } from "./timedTranscript";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, canonicalKeys } from "src/utils/utils";
 import CustomAudioPlayer from "src/components/custom-audio/CustomAudioPlayer";
@@ -81,6 +82,7 @@ function formatTooltipValue(val) {
 // ordering survives the flatten-to-leaves step below.
 const PRIORITY_PREFIXES = [
   "call.transcript",
+  "call.timed_transcript",
   "call.summary",
   "call.user_chat_transcript",
   "call.assistant_chat_transcript",
@@ -128,6 +130,7 @@ function flattenLeaves(obj, prefix) {
 // text sims expose `call.user_chat_transcript` etc. Keys here must stay
 // in sync with TRANSCRIPT_DOT_ALIASES on the backend.
 const VOICE_RESOLVER_KEYS = [
+  "call.timed_transcript",
   "call.voice_recording",
   "call.stereo_recording",
   "call.assistant_recording",
@@ -913,23 +916,26 @@ const SimulationTestMode = React.forwardRef(
             // Voice transcript arrives as an array of turn objects. Mirror
             // the BE eval-runtime shape (`agent: ...\ncustomer: ...`) so the
             // preview matches what the eval actually consumes.
+            const voiceTurns = Array.isArray(callData.transcript)
+              ? callData.transcript
+                  .filter(
+                    (r) =>
+                      r?.content?.trim() &&
+                      (r.speaker_role === "user" ||
+                        r.speaker_role === "assistant"),
+                  )
+                  .map((r) => ({
+                    role: r.speaker_role === "assistant" ? "agent" : "customer",
+                    content: r.content,
+                    startMs: r.start_time_ms,
+                    endMs: r.end_time_ms,
+                  }))
+              : [];
             flat.call.transcript =
               typeof callData.transcript === "string"
                 ? callData.transcript
-                : Array.isArray(callData.transcript)
-                  ? callData.transcript
-                      .filter(
-                        (r) =>
-                          r?.content?.trim() &&
-                          (r.speaker_role === "user" ||
-                            r.speaker_role === "assistant"),
-                      )
-                      .map(
-                        (r) =>
-                          `${r.speaker_role === "assistant" ? "agent" : "customer"}: ${r.content}`,
-                      )
-                      .join("\n")
-                  : "";
+                : voiceTurns.map((t) => `${t.role}: ${t.content}`).join("\n");
+            flat.call.timed_transcript = formatTimedTranscript(voiceTurns);
             flat.call.voice_recording =
               callData.audio_url ||
               rec.combined ||

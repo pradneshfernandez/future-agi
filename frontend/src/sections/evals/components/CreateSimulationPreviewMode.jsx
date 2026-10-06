@@ -41,6 +41,7 @@ const RUNTIME_PLACEHOLDER = "<populated after simulation run>";
 // simulate/temporal/activities/xl.py.
 const VOICE_RUNTIME_LEAVES = [
   "transcript",
+  "timed_transcript",
   "voice_recording",
   "stereo_recording",
   "assistant_recording",
@@ -67,6 +68,7 @@ const COMMON_RUNTIME_LEAVES = [
 
 const PRIORITY_PREFIXES = [
   "call.transcript",
+  "call.timed_transcript",
   "call.summary",
   "call.user_chat_transcript",
   "call.assistant_chat_transcript",
