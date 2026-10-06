@@ -4507,6 +4507,7 @@ class TestExecutor:
         # Addressed for a server-side fetch; an unreachable URL is sniffed as text.
         transcript_data = {
             "transcript": "",
+            "timed_transcript": "",
             "voice_recording": server_reachable_url(call_execution.recording_url or ""),
             "assistant_recording": "",
             "customer_recording": "",
@@ -4598,6 +4599,9 @@ class TestExecutor:
                         from simulate.utils.speaker_roles import (
                             SpeakerRoleResolver,
                         )
+                        from simulate.utils.timed_transcript import (
+                            format_timed_transcript,
+                        )
 
                         eval_provider = SpeakerRoleResolver.detect_provider(
                             call_execution.provider_call_data
@@ -4608,6 +4612,7 @@ class TestExecutor:
                         conversational_roles = (
                             SpeakerRoleResolver.get_conversational_roles()
                         )
+                        timed_turns = []
                         for transcript in transcripts:
                             if not transcript.content.strip():
                                 continue
@@ -4621,6 +4626,17 @@ class TestExecutor:
                             transcript_text.append(
                                 f"{eval_role}: {transcript.content}"
                             )
+                            timed_turns.append(
+                                (
+                                    eval_role,
+                                    transcript.content,
+                                    transcript.start_time_ms,
+                                    transcript.end_time_ms,
+                                )
+                            )
+                        transcript_data["timed_transcript"] = format_timed_transcript(
+                            timed_turns
+                        )
                     transcript_data["transcript"] = "\n".join(transcript_text)
                     transcript_data["user_chat_transcript"] = "\n".join(
                         user_chat_transcript_text
@@ -4862,6 +4878,8 @@ class TestExecutor:
 
                 if value == "transcript":
                     updated_mapping[key] = transcript_data["transcript"]
+                elif value == "timed_transcript":
+                    updated_mapping[key] = transcript_data.get("timed_transcript", "")
                 elif value == "voice_recording":
                     updated_mapping[key] = transcript_data["voice_recording"]
                 elif value == "assistant_recording":

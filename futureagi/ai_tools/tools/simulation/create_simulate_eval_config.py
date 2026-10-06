@@ -54,8 +54,8 @@ class CreateSimulateEvalConfigInput(PydanticBaseModel):
         default=None,
         description=(
             "Mapping of eval template input keys to call execution fields. "
-            "Valid voice fields: transcript, voice_recording, assistant_recording, "
-            "customer_recording, stereo_recording, agent_prompt. "
+            "Valid voice fields: transcript, timed_transcript, voice_recording, "
+            "assistant_recording, customer_recording, stereo_recording, agent_prompt. "
             "Valid text fields: transcript, agent_prompt, user_chat_transcript, "
             "assistant_chat_transcript. "
             "If not provided, auto-maps based on the eval template's required keys "

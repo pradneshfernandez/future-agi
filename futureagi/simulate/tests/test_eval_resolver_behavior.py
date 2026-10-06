@@ -387,6 +387,46 @@ class TestLegacyUnderscoreCompatibility:
 
 @pytest.mark.django_db
 @patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+class TestTimedTranscriptResolution:
+    """`call.timed_transcript` (and its bare form) resolve on both eval-runner paths."""
+
+    _TIMED = "[00:00.0-00:02.0] agent: Hello.\n[00:01.5-00:03.0] customer: Hi"
+
+    @pytest.mark.parametrize("value", ["call.timed_transcript", "timed_transcript"])
+    def test_resolves_on_legacy_executor_path(
+        self, value, run_test, call_execution, transcript_data, eval_template
+    ):
+        ec = _make_eval({"conversation": value}, run_test, eval_template)
+        with patch(
+            "simulate.services.test_executor.run_eval_func",
+            return_value=_SUCCESS_STUB,
+        ) as mock_run:
+            _run(
+                ec, call_execution, {**transcript_data, "timed_transcript": self._TIMED}
+            )
+
+        assert mock_run.call_args.kwargs["mappings"]["conversation"] == self._TIMED
+
+    @pytest.mark.parametrize("value", ["call.timed_transcript", "timed_transcript"])
+    def test_resolves_on_xl_temporal_path(
+        self, value, run_test, call_execution, transcript_data, eval_template
+    ):
+        from model_hub.views.utils import evals as evals_mod
+
+        ec = _make_eval({"conversation": value}, run_test, eval_template)
+        with patch.object(
+            evals_mod, "run_eval_func", return_value=_SUCCESS_STUB
+        ) as mock_run:
+            _run_xl(
+                ec, call_execution, {**transcript_data, "timed_transcript": self._TIMED}
+            )
+
+        assert mock_run.call_args.kwargs["mappings"]["conversation"] == self._TIMED
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
 class TestEvalConfigStatusPersistence:
     """`SimulateEvalConfig.status` is persisted on both success and failure paths."""
 
@@ -1611,6 +1651,36 @@ class TestLegacyTranscriptRecordingResolution:
         xl_transcript_data = _build_transcript_data(call_execution)
         assert xl_transcript_data["assistant_recording"] == "s3://bucket/assistant.mp3"
         assert xl_transcript_data["customer_recording"] == "s3://bucket/customer.mp3"
+
+    def test_both_builders_produce_the_same_timed_transcript(self, call_execution):
+        from simulate.models.test_execution import CallTranscript
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        call_execution.provider_call_data = {}
+        call_execution.call_metadata = {"agent_description": "Secret rules."}
+        call_execution.save(update_fields=["provider_call_data", "call_metadata"])
+        for role, content, start_ms, end_ms in [
+            (CallTranscript.SpeakerRole.ASSISTANT, "Your order ships Monday", 0, 3000),
+            (CallTranscript.SpeakerRole.USER, "Wait, which address?", 2200, 4000),
+        ]:
+            CallTranscript.objects.create(
+                call_execution=call_execution,
+                speaker_role=role,
+                content=content,
+                start_time_ms=start_ms,
+                end_time_ms=end_ms,
+            )
+        executor = TestExecutor(initialize_voice_service=False)
+
+        legacy = executor._get_call_transcript_data(call_execution)
+        temporal = _build_transcript_data(call_execution)
+
+        assert legacy["timed_transcript"] == temporal["timed_transcript"]
+        assert temporal["timed_transcript"] == (
+            "[00:00.0-00:03.0] agent: Your order ships Monday\n"
+            "[00:02.2-00:04.0] customer: Wait, which address? "
+            "(starts 0.8s before agent finished)"
+        )
 
     def test_persisted_recordings_do_not_require_voice_provider_client(
         self, call_execution

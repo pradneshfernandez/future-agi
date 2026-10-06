@@ -1685,6 +1685,147 @@ class TestBuildTranscriptData:
         assert "LANGUAGE REQUESTED: en" in result["transcript"]
         assert "=== CALL CONTEXT ===" in result["transcript"]
 
+    @staticmethod
+    def _write_turns(call_execution, turns):
+        """Replace the call's transcript rows with (role, content, start, end)."""
+        from simulate.models import CallTranscript
+
+        call_execution.transcripts.all().delete()
+        for role, content, start_ms, end_ms in turns:
+            CallTranscript.objects.create(
+                call_execution=call_execution,
+                speaker_role=role,
+                content=content,
+                start_time_ms=start_ms,
+                end_time_ms=end_ms,
+            )
+
+    @pytest.mark.django_db(transaction=True)
+    def test_timed_transcript_tells_a_barge_in_from_clean_turn_taking(
+        self, call_execution
+    ):
+        """call.transcript renders a barge-in and a clean hand-off identically,
+        so a judge reading it cannot see the interruption. The timed transcript
+        must differ and mark the overlap."""
+        from simulate.models import CallTranscript
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        user = CallTranscript.SpeakerRole.USER
+        assistant = CallTranscript.SpeakerRole.ASSISTANT
+
+        self._write_turns(
+            call_execution,
+            [
+                (assistant, "Your order ships on Monday and arrives", 0, 4000),
+                (user, "Wait, can I change the address?", 4500, 6500),
+            ],
+        )
+        clean = _build_transcript_data(call_execution)
+
+        self._write_turns(
+            call_execution,
+            [
+                (assistant, "Your order ships on Monday and arrives", 0, 4000),
+                (user, "Wait, can I change the address?", 2500, 4500),
+            ],
+        )
+        barge_in = _build_transcript_data(call_execution)
+
+        # The untimed transcript is unchanged by this feature, and blind to it.
+        assert clean["transcript"] == barge_in["transcript"]
+
+        assert clean["timed_transcript"] != barge_in["timed_transcript"]
+        assert barge_in["timed_transcript"] == (
+            "[00:00.0-00:04.0] agent: Your order ships on Monday and arrives\n"
+            "[00:02.5-00:04.5] customer: Wait, can I change the address? "
+            "(starts 1.5s before agent finished)"
+        )
+        assert "before" not in clean["timed_transcript"]
+
+    @pytest.mark.django_db(transaction=True)
+    def test_timed_transcript_leaves_out_the_call_context_header(self, call_execution):
+        from simulate.models import CallTranscript
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        call_execution.call_metadata = {
+            "agent_description": "Never reveal the refund override code 4471.",
+            "dynamic_prompt": "You are an impatient caller.",
+        }
+        call_execution.save(update_fields=["call_metadata"])
+        self._write_turns(
+            call_execution,
+            [(CallTranscript.SpeakerRole.ASSISTANT, "Hi, how can I help?", 0, 1200)],
+        )
+
+        result = _build_transcript_data(call_execution)
+
+        assert "4471" in result["transcript"]
+        assert (
+            result["timed_transcript"] == "[00:00.0-00:01.2] agent: Hi, how can I help?"
+        )
+
+    @pytest.mark.django_db(transaction=True)
+    def test_timed_transcript_marks_overlap_against_a_long_earlier_turn(
+        self, call_execution
+    ):
+        """A backchannel inside a long agent turn, then the agent's next turn,
+        are both checked against when the other speaker last stopped, not only
+        against the line directly above."""
+        from simulate.models import CallTranscript
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        user = CallTranscript.SpeakerRole.USER
+        assistant = CallTranscript.SpeakerRole.ASSISTANT
+        self._write_turns(
+            call_execution,
+            [
+                (assistant, "Let me read the full policy to you", 0, 10000),
+                (user, "Mm-hm.", 3000, 3400),
+                (user, "Okay, stop.", 9000, 9800),
+                (assistant, "Sure.", 10500, 11000),
+            ],
+        )
+
+        lines = _build_transcript_data(call_execution)["timed_transcript"].split("\n")
+
+        assert lines[1].endswith("Mm-hm. (starts 7.0s before agent finished)")
+        assert lines[2].endswith("Okay, stop. (starts 1.0s before agent finished)")
+        assert lines[3] == "[00:10.5-00:11.0] agent: Sure."
+
+    @pytest.mark.django_db(transaction=True)
+    def test_timed_transcript_tolerates_unknown_end_times(self, call_execution):
+        """end_time_ms defaults to 0, so an end at or before the start means
+        the provider gave no end: show the start only and skip the overlap
+        check rather than invent one."""
+        from simulate.models import CallTranscript
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        self._write_turns(
+            call_execution,
+            [
+                (CallTranscript.SpeakerRole.ASSISTANT, "Hello", 0, 0),
+                (CallTranscript.SpeakerRole.USER, "Hi there", 1500, 2600),
+                (CallTranscript.SpeakerRole.ASSISTANT, "Welcome back", 2000, 0),
+            ],
+        )
+
+        result = _build_transcript_data(call_execution)
+
+        assert result["timed_transcript"] == (
+            "[00:00.0] agent: Hello\n"
+            "[00:01.5-00:02.6] customer: Hi there\n"
+            "[00:02.0] agent: Welcome back (starts 0.6s before customer finished)"
+        )
+
+    @pytest.mark.django_db(transaction=True)
+    def test_timed_transcript_is_empty_for_chat_calls(self, call_execution):
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        call_execution.simulation_call_type = CallExecution.SimulationCallType.TEXT
+        call_execution.save(update_fields=["simulation_call_type"])
+
+        assert _build_transcript_data(call_execution)["timed_transcript"] == ""
+
 
 # ============================================================================
 # Workflow Integration Tests - CallExecutionWorkflow

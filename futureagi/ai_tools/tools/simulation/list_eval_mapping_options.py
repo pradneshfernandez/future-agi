@@ -13,6 +13,11 @@ from ai_tools.registry import register_tool
 # Valid mapping values for voice simulations
 VOICE_EVAL_COLUMNS = [
     {"field": "transcript", "name": "Transcript", "data_type": "text"},
+    {
+        "field": "timed_transcript",
+        "name": "Timed Transcript (turn times and overlaps, no call context)",
+        "data_type": "text",
+    },
     {"field": "voice_recording", "name": "Mono Voice Recording", "data_type": "audio"},
     {
         "field": "assistant_recording",

@@ -208,6 +208,7 @@ def _build_transcript_data(call_execution):
 
     transcript_data = {
         "transcript": "",
+        "timed_transcript": "",
         "voice_recording": "",
         "assistant_recording": "",
         "customer_recording": "",
@@ -277,6 +278,7 @@ def _build_transcript_data(call_execution):
                                 assistant_chat_transcript_text.append(message)
             else:
                 from simulate.utils.speaker_roles import SpeakerRoleResolver
+                from simulate.utils.timed_transcript import format_timed_transcript
 
                 provider = SpeakerRoleResolver.detect_provider(
                     call_execution.provider_call_data
@@ -287,6 +289,7 @@ def _build_transcript_data(call_execution):
                 # VAPI — swapped the agent/customer labels on the eval transcript.
                 is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
                 conversational_roles = SpeakerRoleResolver.get_conversational_roles()
+                timed_turns = []
                 for transcript in transcripts:
                     if not transcript.content.strip():
                         continue
@@ -298,6 +301,17 @@ def _build_transcript_data(call_execution):
                         is_outbound=is_outbound,
                     )
                     transcript_text.append(f"{eval_role}: {transcript.content}")
+                    timed_turns.append(
+                        (
+                            eval_role,
+                            transcript.content,
+                            transcript.start_time_ms,
+                            transcript.end_time_ms,
+                        )
+                    )
+                transcript_data["timed_transcript"] = format_timed_transcript(
+                    timed_turns
+                )
 
             transcript_data["transcript"] = "\n".join(transcript_text)
             transcript_data["user_chat_transcript"] = "\n".join(
@@ -511,6 +525,7 @@ def walk_subject_path(subjects, path):
 # the transcript_data key the resolver already knows how to look up.
 TRANSCRIPT_DOT_ALIASES = {
     "call.transcript": "transcript",
+    "call.timed_transcript": "timed_transcript",
     "call.voice_recording": "voice_recording",
     "call.stereo_recording": "stereo_recording",
     "call.assistant_recording": "assistant_recording",
@@ -798,6 +813,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         # Pre-fetch data to avoid N+1 queries inside the loop
         known_keys = {
             "transcript",
+            "timed_transcript",
             "voice_recording",
             "assistant_recording",
             "customer_recording",
@@ -880,6 +896,8 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
 
             if value == "transcript":
                 updated_mapping[key] = transcript_data["transcript"]
+            elif value == "timed_transcript":
+                updated_mapping[key] = transcript_data.get("timed_transcript", "")
             elif value == "voice_recording":
                 updated_mapping[key] = transcript_data["voice_recording"]
             elif value == "assistant_recording":
